@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>IPVIEW IPTV</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+<style>
+  body { background-color: #0F071A; font-family: 'Inter', sans-serif; color: white; margin: 0; overflow: hidden; }
+  .focusable { outline: none; }
+  .focused { transform: scale(1.05); transition: 0.25s; box-shadow: 0 0 15px #9333EA; }
+  .gradient-text { background: linear-gradient(to right, #6D28D9, #9333EA); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  .menu-item { background: #1a102d; padding: 12px; border-radius: 6px; text-align: center; cursor: pointer; transition: 0.2s; }
+  .menu-item:hover, .menu-item.focused { background: linear-gradient(to right, #6D28D9, #9333EA); }
+  #player-container { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: black; display: none; align-items: center; justify-content: center; z-index: 50; }
+  #video-player { width: 100%; height: 100%; background: black; }
+  #info-bar { position: absolute; bottom: 0; left: 0; width: 100%; background: rgba(0,0,0,0.6); padding: 12px; font-size: 14px; transition: opacity 0.3s; }
+  #lag-indicator { position: absolute; top: 10px; right: 10px; background: red; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px; display: none; }
+  .channel-card { background: #1a102d; border-radius: 6px; padding: 8px; text-align: center; cursor: pointer; transition: 0.2s; }
+  .channel-card:hover, .channel-card.focused { background: linear-gradient(to bottom right, #6D28D9, #9333EA); }
+  @media (max-width: 768px) {
+    #sidebar { width: 100%; height: auto; flex-direction: row; overflow-x: auto; }
+    #channel-list { grid-template-columns: repeat(2, 1fr); padding-bottom: 80px; }
+  }
+</style>
+</head>
+<body>
+<div id="app" class="flex h-screen w-screen">
+  <div id="sidebar" class="flex flex-col w-48 bg-[#0F071A] border-r border-[#6D28D9] p-4 space-y-3 overflow-y-auto"></div>
+  <div class="flex-1 flex flex-col">
+    <header class="p-4 text-center text-2xl font-semibold gradient-text">IPVIEW</header>
+    <main id="channel-list" class="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 p-4 overflow-y-auto"></main>
+  </div>
+</div>
+
+<div id="player-container" class="flex">
+  <video id="video-player" autoplay></video>
+  <div id="info-bar">Assistindo...</div>
+  <div id="lag-indicator">LAG</div>
+</div>
+
+<script>
+const CHANNEL_DATA = {
+  "esportes": [
+    { "nome": "Premiere 1", "url": "https://d1muf25xa11so8hp22.s27-usa-cloudfront-net.online/token/d485d118d525ae4326aa31371f5dfcef/premiere.m3u8" },
+    { "nome": "Premiere 2", "url": "https://d1muf25xa11so8hp22.s27-usa-cloudfront-net.online/token/aa1f6257eeb308e3e6677bae5fb7f1c8/premiere2.m3u8" }
+  ],
+  "noticias": [
+    { "nome": "Record News", "url": "https://d1muf25xa11so8hp22.s27-usa-cloudfront-net.online/token/3728ae10c1a4f5b4a394d9771ec12db2/record.m3u8" }
+  ],
+  "infantil": [
+    { "nome": "Cartoon Network", "url": "https://d1muf25xa11so8hp22.s27-usa-cloudfront-net.online/token/f67e159151a581847c31a461034c795a/cartoonnetwork.m3u8" },
+    { "nome": "Nickelodeon", "url": "https://d1muf25xa11soq8hp22.s27-usa-cloudfront-net.online/token/528246d1903b4743bca33088eedc800f/nickelodeon.m3u8" }
+  ],
+  "filmes_e_series": [
+    { "nome": "Telecine Premium", "url": "https://placehold.co/400x225/ba55d3/ffffff?text=Telecine" },
+    { "nome": "HBO HD", "url": "https://placehold.co/400x225/4b0082/ffffff?text=HBO" }
+  ],
+  "variedades": [
+    { "nome": "Multishow", "url": "https://placehold.co/400x225/daa520/000000?text=Multi" },
+    { "nome": "GNT", "url": "https://placehold.co/400x225/808080/ffffff?text=GNT" }
+  ]
+};
+
+let currentCategory = null;
+let isMobile = /Android|iPhone|iPad|MiBOX/i.test(navigator.userAgent);
+
+function renderMenu() {
+  const sidebar = document.getElementById('sidebar');
+  sidebar.innerHTML = '';
+  Object.keys(CHANNEL_DATA).forEach(cat => {
+    const div = document.createElement('div');
+    div.className = 'menu-item focusable';
+    div.innerText = cat.toUpperCase();
+    div.onclick = () => renderChannels(cat);
+    sidebar.appendChild(div);
+  });
+}
+
+function renderChannels(cat) {
+  currentCategory = cat;
+  const list = document.getElementById('channel-list');
+  list.innerHTML = '';
+  CHANNEL_DATA[cat].forEach((ch, i) => {
+    const card = document.createElement('div');
+    card.className = 'channel-card focusable';
+    card.innerHTML = `
+      <img src="https://placehold.co/300x169/1a102d/ffffff?text=${i+1}" class="rounded mb-2 w-full">
+      <div>${i+1}. ${ch.nome}</div>`;
+    card.onclick = () => openPlayer(ch);
+    list.appendChild(card);
+  });
+}
+
+function openPlayer(ch) {
+  const container = document.getElementById('player-container');
+  const video = document.getElementById('video-player');
+  const info = document.getElementById('info-bar');
+  const lag = document.getElementById('lag-indicator');
+  container.style.display = 'flex';
+  info.innerText = 'Assistindo: ' + ch.nome;
+  if (Hls.isSupported()) {
+    const hls = new Hls();
+    hls.loadSource(ch.url);
+    hls.attachMedia(video);
+    hls.on(Hls.Events.ERROR, () => lag.style.display = 'block');
+    hls.on(Hls.Events.BUFFER_STALLED, () => lag.style.display = 'block');
+    hls.on(Hls.Events.BUFFER_EMPTY, () => lag.style.display = 'block');
+    video.addEventListener('playing', () => lag.style.display = 'none');
+  } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+    video.src = ch.url;
+  } else {
+    container.innerHTML = '<div class="w-full h-full flex items-center justify-center text-white text-xl">Não foi possível reproduzir.</div>';
+  }
+  setAutoHideControls();
+}
+
+function closePlayer() {
+  const container = document.getElementById('player-container');
+  const video = document.getElementById('video-player');
+  container.style.display = 'none';
+  video.pause();
+  video.src = '';
+}
+
+function setAutoHideControls(timeoutMs = 5000) {
+  const info = document.getElementById('info-bar');
+  info.style.opacity = 1;
+  clearTimeout(window._autoHideTimer);
+  window._autoHideTimer = setTimeout(() => info.style.opacity = 0, timeoutMs);
+}
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' || e.key === 'Backspace') closePlayer();
+});
+
+renderMenu();
+renderChannels(Object.keys(CHANNEL_DATA)[0]);
+</script>
+</body>
+</html>
